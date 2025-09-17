@@ -212,12 +212,51 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
     let lastErr = null;
     for (const base of CONFIG.BINANCE_BASES) {
       try {
-        const res = await fetch(base + path + qs, { headers: { 'Accept': 'application/json' } });
-        if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
-        return res.json();
+        const data = await fetchJson(base + path + qs, { headers: { 'Accept': 'application/json' } }, 3, 350);
+        return data;
       } catch (e) { lastErr = e; }
     }
     throw lastErr || new Error('All Binance bases failed');
+  }
+
+  async function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+  async function fetchJson(url, opts, retries, backoff) {
+    for (let i=0; i<=retries; i++) {
+      try {
+        const res = await fetch(url, opts);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return await res.json();
+      } catch (e) {
+        if (i === retries) throw e;
+        await sleep(backoff * Math.pow(2, i));
+      }
+    }
+  }
+
+  function createLimiter(max){
+    let running = 0; const queue = [];
+    const run = () => {
+      if (running >= max) return;
+      const next = queue.shift();
+      if (!next) return;
+      running++;
+      next.fn().then(next.resolve, next.reject).finally(() => { running--; run(); });
+    };
+    return (fn) => new Promise((resolve, reject) => { queue.push({ fn, resolve, reject }); run(); });
+  }
+
+  function getCache(key, ttlMs){
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj.ts !== 'number') return null;
+      if (Date.now() - obj.ts > ttlMs) return null;
+      return obj.value;
+    } catch { return null; }
+  }
+  function setCache(key, value){
+    try { localStorage.setItem(key, JSON.stringify({ ts: Date.now(), value })); } catch {}
   }
 
   const MINUTES = { '1m':1, '3m':3, '5m':5, '15m':15 };
@@ -245,9 +284,13 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
   function isExcluded(sym) { const base = baseFromPair(sym); if (STABLES.has(base)) return true; return EXCL_TOKENS.some(tok => sym.includes(tok)); }
 
   async function sumDailyQuoteVolume(symbol, days) {
+    const key = 'sumDaily:' + symbol + ':' + days;
+    const cached = getCache(key, 10*60*1000);
+    if (cached != null) return cached;
     const data = await binanceGet('/api/v3/klines', { symbol, interval: '1d', limit: days });
     let sum = 0;
     for (const k of data) { const qv = parseFloat(k[7] || '0'); if (Number.isFinite(qv)) sum += qv; }
+    setCache(key, sum);
     return sum;
   }
 
@@ -268,12 +311,15 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
     const period = (periodSel?.value || '24h');
     if (period !== '24h') {
       const days = period === '7d' ? 7 : 30;
-      const subset = symbols.slice(0, Math.max(120, CONFIG.TOP_N));
-      const scored = [];
-      for (let i=0;i<subset.length;i++) {
-        try { const sum = await sumDailyQuoteVolume(subset[i][0], days); scored.push([subset[i][0], sum]); }
-        catch(e) { /* ignore */ }
-      }
+      const subset = symbols.slice(0, Math.max(200, CONFIG.TOP_N));
+      const limitRun = createLimiter(8);
+      const promises = subset.map(pair => limitRun(async () => {
+        const sym = pair[0];
+        try { const sum = await sumDailyQuoteVolume(sym, days); return [sym, sum]; }
+        catch { return null; }
+      }));
+      const results = await Promise.all(promises);
+      const scored = results.filter(Boolean);
       scored.sort((a,b) => b[1]-a[1]);
       syms = scored.slice(0, CONFIG.TOP_N).map(r => r[0]);
     }
@@ -281,20 +327,31 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
     const traces = [];
     const endVals = [];
     let xTimesRef = null;
-    for (let i=0;i<syms.length;i++) {
-      const symbol = syms[i];
+    const limitRun2 = createLimiter(8);
+    function getKlinesCached(symbol, interval, limit){
+      const key = 'klines:' + symbol + ':' + interval + ':' + limit;
+      const cached = getCache(key, 60*1000);
+      if (cached) return Promise.resolve(cached);
+      return binanceGet('/api/v3/klines', { symbol, interval, limit }).then(data => { setCache(key, data); return data; });
+    }
+    const klTasks = syms.map(symbol => limitRun2(async () => {
       const label = CONFIG.LABEL_BASE_ONLY ? symbol.replace(/USDT$/,'') : symbol;
       try {
-        const kl = await binanceGet('/api/v3/klines', { symbol, interval: CONFIG.INTERVAL, limit });
+        const kl = await getKlinesCached(symbol, CONFIG.INTERVAL, limit);
         const rows = kl.map(r => ({ t: new Date(r[0]), c: parseFloat(r[4]) })).filter(x => Number.isFinite(x.c));
         const pct = toPercentSeries(rows);
-        if (!pct.length) continue;
+        if (!pct.length) return null;
         const xTimes = pct.map(p => p.t);
         const y = pct.map(p => p.y);
-        traces.push({ type: 'scatter', mode: 'lines', name: label, x: xTimes, y, line: { width: 1.3 } });
-        endVals.push({ label, lastX: xTimes[xTimes.length-1], lastY: y[y.length-1] });
-        if (!xTimesRef) xTimesRef = xTimes;
-      } catch (e) { /* ignore one-off errors */ }
+        return { symbol, label, xTimes, y };
+      } catch { return null; }
+    }));
+    const klResults = await Promise.all(klTasks);
+    for (const res of klResults) {
+      if (!res) continue;
+      traces.push({ type: 'scatter', mode: 'lines', name: res.label, x: res.xTimes, y: res.y, line: { width: 1.3 } });
+      endVals.push({ label: res.label, lastX: res.xTimes[res.xTimes.length-1], lastY: res.y[res.y.length-1] });
+      if (!xTimesRef) xTimesRef = res.xTimes;
     }
     endVals.sort((a,b) => b.lastY - a.lastY);
     const topK = 5, botK = 5;
@@ -433,7 +490,7 @@ async function main() {
       });
 
       endVals.push({ i, label, lastX: xTimes[xTimes.length-1], lastY: y[y.length-1] });
-      await new Promise(r => setTimeout(r, 30));
+      // removed per-symbol artificial delay for faster builds
     } catch (e) {
       console.warn(`[warn] ${symbol}: ${e.message}`);
     }
