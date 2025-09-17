@@ -89,7 +89,7 @@ function toPercentSeries(rows) {
   return rows.map(r => ({ t: r.t, y: r.c / base - 1 })); // percent (0.05 = +5%)
 }
 
-function renderHTML(traces, annotations, title, note, xTickVals, xTickText) {
+function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retRows) {
   return `<!doctype html>
 <html>
 <head>
@@ -97,7 +97,8 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText) {
 <title>${title}</title>
 <style>
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 0; background: #ffffff; color: #111; }
-  #chart { width: 100vw; height: 95vh; }
+  .container { display: flex; gap: 12px; padding: 12px; height: calc(100vh - 60px); box-sizing: border-box; }
+  #chart { flex: 1; min-width: 0; height: 100%; }
   .header { padding: 10px 16px; background: #f6f8fa; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .header h1 { margin: 0; font-size: 16px; font-weight: 600; }
   .spacer { flex: 1; }
@@ -105,6 +106,14 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText) {
   a { color: #0969da; }
   .btn { appearance: none; border: 1px solid #d0d7de; background: #f6f8fa; color: #111; padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
   .btn:disabled { opacity: 0.6; cursor: default; }
+  .sidebar { width: 240px; max-width: 280px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; overflow: auto; background: #fff; }
+  .sidebar h2 { margin: 4px 4px 8px 4px; font-size: 13px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid #f0f2f5; text-align: left; }
+  th:nth-child(2), td:nth-child(2) { text-align: right; }
+  tr:hover { background: #fafbfc; }
+  .pos { color: #0a7f3f; }
+  .neg { color: #b42318; }
 </style>
 </head>
 <body>
@@ -114,7 +123,16 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText) {
   <button id="refreshBtn" class="btn">Refresh</button>
   <div class="note" id="note">${note}</div>
 </div>
-<div id="chart"></div>
+<div class="container">
+  <aside class="sidebar">
+    <h2>Returns (CT)</h2>
+    <table>
+      <thead><tr><th>Ticker</th><th>Return</th></tr></thead>
+      <tbody id="retTbody"></tbody>
+    </table>
+  </aside>
+  <div id="chart"></div>
+ </div>
 <script src="./plotly.min.js"></script>
 <script>
   const traces = ${JSON.stringify(traces)};
@@ -127,6 +145,7 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText) {
     LABEL_BASE_ONLY: ${JSON.stringify(LABEL_BASE_ONLY)},
     TZ: ${JSON.stringify(TZ)}
   };
+  const initialReturns = ${JSON.stringify(retRows)};
   const layout = {
     paper_bgcolor: '#ffffff',
     plot_bgcolor: '#ffffff',
@@ -220,8 +239,24 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText) {
     }
     const xTickVals = (xTimesRef || []).filter(isTopOfHourInTZ).map(d => new Date(d).toISOString());
     const xTickText = (xTimesRef || []).filter(isTopOfHourInTZ).map(d => new Intl.DateTimeFormat('en-US', { hour:'2-digit', minute:'2-digit', hour12:false, timeZone: CONFIG.TZ }).format(new Date(d)));
-    return { traces, annotations, note, xTickVals, xTickText };
+    const returns = endVals
+      .slice()
+      .sort((a,b) => b.lastY - a.lastY)
+      .map(s => ({ label: s.label, pct: s.lastY }));
+    return { traces, annotations, note, xTickVals, xTickText, returns };
   }
+  function renderTable(rows) {
+    const tb = document.getElementById('retTbody');
+    const sorted = (rows || []).slice().sort((a,b) => b.pct - a.pct);
+    let html = '';
+    for (const r of sorted) {
+      const pct = (r.pct * 100).toFixed(1) + '%';
+      const cls = r.pct >= 0 ? 'pos' : 'neg';
+      html += '<tr><td>' + r.label + '</td><td class="' + cls + '">' + pct + '</td></tr>';
+    }
+    tb.innerHTML = html;
+  }
+  renderTable(initialReturns);
 
   const btn = document.getElementById('refreshBtn');
   const noteEl = document.getElementById('note');
@@ -235,6 +270,7 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText) {
       layout.xaxis.ticktext = res.xTickText;
       noteEl.textContent = res.note;
       await Plotly.react('chart', res.traces, layout, {responsive: true});
+      renderTable(res.returns);
     } catch (e) {
       alert('Refresh failed: ' + (e?.message || e));
     } finally { btn.disabled = false; btn.textContent = old; }
@@ -251,6 +287,7 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText) {
       layout.xaxis.ticktext = res.xTickText;
       noteEl.textContent = res.note;
       await Plotly.react('chart', res.traces, layout, {responsive: true});
+      renderTable(res.returns);
     } catch (e) {
       console.warn('Auto-refresh failed:', e);
     } finally {
@@ -353,7 +390,11 @@ async function main() {
   const xTimesRef = traces.length ? traces[0].x : [];
   const xTickVals = xTimesRef.filter(d => dayjs(d).tz(TZ).minute() === 0).map(d => new Date(d).toISOString());
   const xTickText = xTimesRef.filter(d => dayjs(d).tz(TZ).minute() === 0).map(d => dayjs(d).tz(TZ).format("HH:mm"));
-  const html = renderHTML(traces, annotations, title, note, xTickVals, xTickText);
+  const retRows = endVals
+    .slice()
+    .sort((a,b) => b.lastY - a.lastY)
+    .map(s => ({ label: s.label, pct: s.lastY }));
+  const html = renderHTML(traces, annotations, title, note, xTickVals, xTickText, retRows);
   const htmlPath = path.join(OUTDIR, "spaghetti.html");
   await fs.writeFile(htmlPath, html, "utf8");
   console.log("Saved HTML:", htmlPath);
