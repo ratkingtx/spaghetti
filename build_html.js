@@ -130,7 +130,7 @@ function toPercentSeries(rows) {
   return rows.map(r => ({ t: r.t, y: r.c / base - 1 })); // percent (0.05 = +5%)
 }
 
-function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retRows) {
+function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retRows, xAxisRange) {
   return `<!doctype html>
 <html>
 <head>
@@ -147,6 +147,7 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
   a { color: #0969da; }
   .btn { appearance: none; border: 1px solid #d0d7de; background: #f6f8fa; color: #111; padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
   .btn:disabled { opacity: 0.6; cursor: default; }
+  .btn-sm { padding: 4px 8px; font-size: 11px; }
   .sidebar { width: 240px; max-width: 280px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; overflow: auto; background: #fff; }
   .sidebar h2 { margin: 4px 4px 8px 4px; font-size: 13px; font-weight: 600; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -175,7 +176,10 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
 </div>
 <div class="container">
   <aside class="sidebar">
-    <h2>Returns (CT)</h2>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <h2 style="margin:4px">Returns (CT)</h2>
+      <button id="resetSelBtn" class="btn btn-sm" title="Clear highlights">Reset</button>
+    </div>
     <table>
       <thead><tr><th>Ticker</th><th>Return</th></tr></thead>
       <tbody id="retTbody"></tbody>
@@ -199,7 +203,7 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
   const layout = {
     paper_bgcolor: '#ffffff',
     plot_bgcolor: '#ffffff',
-    xaxis: { gridcolor: '#e5e7eb', showgrid: true, showline: true, linecolor: '#e5e7eb', zeroline: false, type: 'date', title: 'Time (UTC-5)', tickmode: 'array', tickvals: ${JSON.stringify(xTickVals)}, ticktext: ${JSON.stringify(xTickText)} },
+    xaxis: { gridcolor: '#e5e7eb', showgrid: true, showline: true, linecolor: '#e5e7eb', zeroline: false, type: 'date', title: 'Time (UTC-5)', tickmode: 'array', tickvals: ${JSON.stringify(xTickVals)}, ticktext: ${JSON.stringify(xTickText)}, range: ${JSON.stringify(xAxisRange)} },
     yaxis: { gridcolor: '#e5e7eb', zeroline: false, title: 'Return since first bar', tickformat: '+.1%' },
     legend: { orientation: 'h', y: -0.12 },
     margin: { t: 16, r: 120, b: 72, l: 64 },  // extra right margin to make room for annotation labels
@@ -420,6 +424,10 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
     if (selectedLabels.has(label)) selectedLabels.delete(label); else selectedLabels.add(label);
     applyHighlight();
   });
+  document.getElementById('resetSelBtn')?.addEventListener('click', () => {
+    selectedLabels.clear();
+    applyHighlight();
+  });
 
   const btn = document.getElementById('refreshBtn');
   const noteEl = document.getElementById('note');
@@ -561,11 +569,13 @@ async function main() {
   const xTimesRef = traces.length ? traces[0].x : [];
   const xTickVals = xTimesRef.filter(isTopOfHourInUTCminus5).map(d => new Date(d).toISOString());
   const xTickText = xTimesRef.filter(isTopOfHourInUTCminus5).map(formatUTCminus5);
+  const rangeStart = xTimesRef.length ? dayjs(xTimesRef[0]).utcOffset(-5*60).startOf('hour').utc().toISOString() : null;
+  const rangeEnd = xTimesRef.length ? dayjs(xTimesRef[xTimesRef.length-1]).utcOffset(-5*60).add(1,'hour').startOf('hour').utc().toISOString() : null;
   const retRows = endVals
     .slice()
     .sort((a,b) => b.lastY - a.lastY)
     .map(s => ({ label: s.label, pct: s.lastY }));
-  const html = renderHTML(traces, annotations, title, note, xTickVals, xTickText, retRows);
+  const html = renderHTML(traces, annotations, title, note, xTickVals, xTickText, retRows, [rangeStart, rangeEnd]);
   const htmlPath = path.join(OUTDIR, "spaghetti.html");
   await fs.writeFile(htmlPath, html, "utf8");
   console.log("Saved HTML:", htmlPath);
