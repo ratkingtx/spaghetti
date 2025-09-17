@@ -140,7 +140,7 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 0; background: #ffffff; color: #111; }
   .container { display: flex; gap: 12px; padding: 12px; height: calc(100vh - 60px); box-sizing: border-box; }
   #chart { flex: 1; min-width: 0; height: 100%; position: relative; }
-  .y-handle { position: absolute; left: 0; top: 0; width: 12px; height: 100%; cursor: ns-resize; background: transparent; }
+  .y-handle { position: absolute; left: 0; top: 0; width: 28px; height: 100%; cursor: ns-resize; background: transparent; }
   .y-handle:hover { background: rgba(0,0,0,0.02); }
   .header { padding: 10px 16px; background: #f6f8fa; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .header h1 { margin: 0; font-size: 16px; font-weight: 600; }
@@ -220,6 +220,7 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
     if (!handle) return;
     let startY = null;
     let startRange = null;
+    let startHeight = null;
     function screenToY(val) {
       const gd = document.getElementById('chart');
       const bbox = gd.getBoundingClientRect();
@@ -235,6 +236,7 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
       const yr = (gd.layout && gd.layout.yaxis && gd.layout.yaxis.range) ? gd.layout.yaxis.range.slice() : layout.yaxis.range || [0,1];
       startY = e.clientY;
       startRange = yr;
+      startHeight = gd.getBoundingClientRect().height || 1;
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp, { once: true });
     }
@@ -242,9 +244,9 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
       if (startY == null) return;
       const gd = document.getElementById('chart');
       const dy = e.clientY - startY;
-      const scale = 0.004; // sensitivity
       const span = startRange[1] - startRange[0];
-      const delta = dy * span * scale;
+      const norm = dy / (startHeight || 1); // fraction of chart height dragged
+      const delta = norm * span; // proportional scaling
       const newRange = [startRange[0] + delta, startRange[1] - delta];
       Plotly.relayout('chart', { 'yaxis.range': newRange });
     }
