@@ -35,4 +35,4 @@ Then in GitHub → Settings → Pages:
 - Branch: `main` / folder `docs`
 
 Your site will be available at:
-- https://<your-username>.github.io/<repo-name>/ (e.g., https://ratkingtx.github.io/whatever/)
+- https://ratkingtx.github.io/spaghetti/
