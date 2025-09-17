@@ -211,9 +211,50 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
     yaxis: { gridcolor: '#e5e7eb', zeroline: false, title: 'Return since first bar', tickformat: '+.1%' },
     legend: { orientation: 'h', y: -0.12 },
     margin: { t: 16, r: 120, b: 72, l: 64 },  // extra right margin to make room for annotation labels
-    annotations: annotations
+    annotations: annotations,
+    dragmode: 'pan'
   };
-  Plotly.newPlot('chart', traces, layout, {responsive: true});
+  Plotly.newPlot('chart', traces, layout, {responsive: true, scrollZoom: false});
+
+  function updateYHandleWidth(){
+    const gd = document.getElementById('chart');
+    const h = document.getElementById('yHandle');
+    if (!gd || !h || !gd.layout) return;
+    const left = (gd._fullLayout && gd._fullLayout._size && gd._fullLayout._size.l) ? gd._fullLayout._size.l : 64;
+    h.style.width = left + 'px';
+  }
+  updateYHandleWidth();
+  document.getElementById('chart').on('plotly_relayout', updateYHandleWidth);
+  window.addEventListener('resize', updateYHandleWidth);
+
+  // Wheel zoom (low sensitivity) around center of current view
+  (function initWheelZoom(){
+    const gdEl = document.getElementById('chart');
+    gdEl.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const gd = document.getElementById('chart');
+      const lx = (gd.layout && gd.layout.xaxis && gd.layout.xaxis.range) ? gd.layout.xaxis.range.slice() : layout.xaxis.range;
+      const ly = (gd.layout && gd.layout.yaxis && gd.layout.yaxis.range) ? gd.layout.yaxis.range.slice() : layout.yaxis.range;
+      if (!lx || !ly) return;
+      const rate = 0.12; // low sensitivity
+      const out = e.deltaY > 0;
+      const factor = out ? (1+rate) : (1/(1+rate));
+      const cx = (lx[0] instanceof Date || /Z$/.test(lx[0])) ? (new Date(lx[0]).getTime() + new Date(lx[1]).getTime())/2 : (lx[0]+lx[1])/2;
+      const sx = (lx[0] instanceof Date || /Z$/.test(lx[0])) ? (new Date(lx[1]).getTime() - new Date(lx[0]).getTime()) : (lx[1]-lx[0]);
+      const cy = (ly[0]+ly[1])/2;
+      const sy = (ly[1]-ly[0]);
+      const newSx = sx * factor;
+      const newSy = sy * factor;
+      let xr;
+      if (typeof lx[0] === 'string') {
+        xr = [new Date(cx - newSx/2).toISOString(), new Date(cx + newSx/2).toISOString()];
+      } else {
+        xr = [cx - newSx/2, cx + newSx/2];
+      }
+      const yr = [cy - newSy/2, cy + newSy/2];
+      Plotly.relayout('chart', { 'xaxis.range': xr, 'yaxis.range': yr });
+    }, { passive: false });
+  })();
   // Y-axis drag-to-zoom: click-drag vertically on left handle to set new y-range
   (function initYDrag() {
     const handle = document.getElementById('yHandle');
