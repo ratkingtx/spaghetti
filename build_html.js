@@ -199,7 +199,7 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
   const layout = {
     paper_bgcolor: '#ffffff',
     plot_bgcolor: '#ffffff',
-    xaxis: { gridcolor: '#e5e7eb', showgrid: true, zeroline: false, type: 'date', title: 'Time (America/Chicago)', tickmode: 'array', tickvals: ${JSON.stringify(xTickVals)}, ticktext: ${JSON.stringify(xTickText)} },
+    xaxis: { gridcolor: '#e5e7eb', showgrid: true, showline: true, linecolor: '#e5e7eb', zeroline: false, type: 'date', title: 'Time (UTC-5)', tickmode: 'array', tickvals: ${JSON.stringify(xTickVals)}, ticktext: ${JSON.stringify(xTickText)} },
     yaxis: { gridcolor: '#e5e7eb', zeroline: false, title: 'Return since first bar', tickformat: '+.1%' },
     legend: { orientation: 'h', y: -0.12 },
     margin: { t: 16, r: 120, b: 72, l: 64 },  // extra right margin to make room for annotation labels
@@ -361,11 +361,24 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
     const updatedAt = new Date();
     const tzFmt = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short', hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false, timeZone: CONFIG.TZ });
     const note = 'Extremes labeled (Top-5 & Bottom-5) with right-gutter arrows; last updated: ' + tzFmt.format(updatedAt) + ' (' + CONFIG.TZ + ').';
-    function isTopOfHourInTZ(date) {
-      return new Intl.DateTimeFormat('en-US', { minute: '2-digit', timeZone: CONFIG.TZ }).format(new Date(date)) === '00';
+    function isTopOfHourUTCminus5(date) {
+      const d = new Date(date);
+      const utcMs = d.getTime();
+      const offsetMs = 5 * 60 * 60 * 1000;
+      const shifted = new Date(utcMs - offsetMs);
+      return shifted.getUTCMinutes() === 0;
     }
-    const xTickVals = (xTimesRef || []).filter(isTopOfHourInTZ).map(d => new Date(d).toISOString());
-    const xTickText = (xTimesRef || []).filter(isTopOfHourInTZ).map(d => new Intl.DateTimeFormat('en-US', { hour:'2-digit', minute:'2-digit', hour12:false, timeZone: CONFIG.TZ }).format(new Date(d)));
+    function formatHHmmUTCminus5(date) {
+      const d = new Date(date);
+      const utcMs = d.getTime();
+      const offsetMs = 5 * 60 * 60 * 1000;
+      const shifted = new Date(utcMs - offsetMs);
+      const h = String(shifted.getUTCHours()).padStart(2,'0');
+      const m = String(shifted.getUTCMinutes()).padStart(2,'0');
+      return h + ':' + m;
+    }
+    const xTickVals = (xTimesRef || []).filter(isTopOfHourUTCminus5).map(d => new Date(d).toISOString());
+    const xTickText = (xTimesRef || []).filter(isTopOfHourUTCminus5).map(formatHHmmUTCminus5);
     const returns = endVals
       .slice()
       .sort((a,b) => b.lastY - a.lastY)
@@ -535,9 +548,17 @@ async function main() {
   const generatedAt = dayjs().tz(TZ).format("YYYY-MM-DD HH:mm:ss z");
   const title = `Top ${syms.length} by 24h volume — Normalized % (${INTERVAL}, ~${HOURS}h) [Binance USDT]`;
   const note = `Extremes labeled (Top-5 & Bottom-5) with right-gutter arrows; last updated: ${generatedAt} (${TZ}).`;
+  // Build hourly ticks in fixed UTC-5 regardless of viewer locale
+  function isTopOfHourInUTCminus5(d) {
+    const dt = dayjs(d).utcOffset(-5 * 60);
+    return dt.minute() === 0;
+  }
+  function formatUTCminus5(d) {
+    return dayjs(d).utcOffset(-5 * 60).format("HH:mm");
+  }
   const xTimesRef = traces.length ? traces[0].x : [];
-  const xTickVals = xTimesRef.filter(d => dayjs(d).tz(TZ).minute() === 0).map(d => new Date(d).toISOString());
-  const xTickText = xTimesRef.filter(d => dayjs(d).tz(TZ).minute() === 0).map(d => dayjs(d).tz(TZ).format("HH:mm"));
+  const xTickVals = xTimesRef.filter(isTopOfHourInUTCminus5).map(d => new Date(d).toISOString());
+  const xTickText = xTimesRef.filter(isTopOfHourInUTCminus5).map(formatUTCminus5);
   const retRows = endVals
     .slice()
     .sort((a,b) => b.lastY - a.lastY)
