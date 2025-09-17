@@ -1,7 +1,8 @@
 #!/bin/zsh
 set -e
 
-export TOP_N=${TOP_N:-30}
+export TOP_N=${TOP_N:-50}
+export VOLUME_PERIOD=${VOLUME_PERIOD:-24h}
 export INTERVAL=${INTERVAL:-5m}
 export HOURS=${HOURS:-24}
 export OUTDIR=${OUTDIR:-out_spaghetti_html}

@@ -20,6 +20,7 @@ const HOURS = parseInt(process.env.HOURS || "24", 10);
 const MAX_KLINES_LIMIT = 1000; // Binance cap
 const LABEL_BASE_ONLY = (process.env.LABEL_BASE_ONLY || "true").toLowerCase() === "true"; // base tickers (SOL) instead of SOLUSDT
 const TZ = process.env.TZ_NAME || "America/Chicago"; // Show Texas time
+const VOLUME_PERIOD = (process.env.VOLUME_PERIOD || "24h").toLowerCase(); // 24h|7d|30d
 
 const STABLES = new Set(["USDT","USDC","BUSD","DAI","TUSD","FDUSD","EURS","USDP","USDD","UST","USTC","PYUSD"]);
 const EXCL_TOKENS = ["UP","DOWN","3L","3S","5L","5S","BULL","BEAR"];
@@ -49,6 +50,46 @@ async function binanceGet(pathname, params) {
 
 async function fetch24hTickers() {
   return binanceGet(`/api/v3/ticker/24hr`);
+}
+async function sumDailyQuoteVolume(symbol, days) {
+  const data = await binanceGet(`/api/v3/klines`, { symbol, interval: '1d', limit: days });
+  let sum = 0;
+  for (const k of data) {
+    const quoteVol = parseFloat(k[7] || '0');
+    if (Number.isFinite(quoteVol)) sum += quoteVol;
+  }
+  return sum;
+}
+
+async function topSymbolsByVolumePeriod(tickers, topn, period) {
+  // Build candidate list from 24h tickers (has all USDT symbols)
+  const candidates = [];
+  for (const t of tickers) {
+    const sym = t.symbol || '';
+    if (!looksLikeUsdtSpot(sym)) continue;
+    if (isExcluded(sym)) continue;
+    const qv24h = parseFloat(t.quoteVolume || '0');
+    candidates.push([sym, qv24h]);
+  }
+  candidates.sort((a,b) => b[1]-a[1]);
+  if (period === '24h') {
+    return candidates.slice(0, topn).map(r => r[0]);
+  }
+  const days = period === '7d' ? 7 : 30;
+  const subset = candidates.slice(0, Math.max(200, topn));
+  const scored = [];
+  for (let i=0;i<subset.length;i++) {
+    const sym = subset[i][0];
+    try {
+      const sum = await sumDailyQuoteVolume(sym, days);
+      scored.push([sym, sum]);
+      await new Promise(r => setTimeout(r, 20));
+    } catch (e) {
+      // ignore individual failures
+    }
+  }
+  scored.sort((a,b) => b[1]-a[1]);
+  return scored.slice(0, topn).map(r => r[0]);
 }
 function topByQuoteVolume(tickers, topn=30) {
   const rows = [];
@@ -114,12 +155,21 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
   tr:hover { background: #fafbfc; }
   .pos { color: #0a7f3f; }
   .neg { color: #b42318; }
+  tr.active { background: #eef6ff; }
+
+  .select { appearance: none; border: 1px solid #d0d7de; background: #fff; color: #111; padding: 6px 10px; border-radius: 6px; font-size: 12px; }
 </style>
 </head>
 <body>
 <div class="header">
   <h1>${title}</h1>
   <div class="spacer"></div>
+  <label style="font-size:12px">Period:</label>
+  <select id="volPeriod" class="select">
+    <option value="24h">24h</option>
+    <option value="7d">7d</option>
+    <option value="30d">30d</option>
+  </select>
   <button id="refreshBtn" class="btn">Refresh</button>
   <div class="note" id="note">${note}</div>
 </div>
@@ -194,6 +244,13 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
   function baseFromPair(sym) { return sym.endsWith('USDT') ? sym.slice(0, -4) : sym; }
   function isExcluded(sym) { const base = baseFromPair(sym); if (STABLES.has(base)) return true; return EXCL_TOKENS.some(tok => sym.includes(tok)); }
 
+  async function sumDailyQuoteVolume(symbol, days) {
+    const data = await binanceGet('/api/v3/klines', { symbol, interval: '1d', limit: days });
+    let sum = 0;
+    for (const k of data) { const qv = parseFloat(k[7] || '0'); if (Number.isFinite(qv)) sum += qv; }
+    return sum;
+  }
+
   async function generateData() {
     const limit = computeLimit(CONFIG.HOURS, CONFIG.INTERVAL);
     const tickers = await binanceGet('/api/v3/ticker/24hr');
@@ -206,7 +263,20 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
       symbols.push([sym, qv]);
     }
     symbols.sort((a,b) => b[1]-a[1]);
-    const syms = symbols.slice(0, CONFIG.TOP_N).map(r => r[0]);
+    let syms = symbols.slice(0, CONFIG.TOP_N).map(r => r[0]);
+    const periodSel = document.getElementById('volPeriod');
+    const period = (periodSel?.value || '24h');
+    if (period !== '24h') {
+      const days = period === '7d' ? 7 : 30;
+      const subset = symbols.slice(0, Math.max(120, CONFIG.TOP_N));
+      const scored = [];
+      for (let i=0;i<subset.length;i++) {
+        try { const sum = await sumDailyQuoteVolume(subset[i][0], days); scored.push([subset[i][0], sum]); }
+        catch(e) { /* ignore */ }
+      }
+      scored.sort((a,b) => b[1]-a[1]);
+      syms = scored.slice(0, CONFIG.TOP_N).map(r => r[0]);
+    }
 
     const traces = [];
     const endVals = [];
@@ -252,11 +322,32 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
     for (const r of sorted) {
       const pct = (r.pct * 100).toFixed(1) + '%';
       const cls = r.pct >= 0 ? 'pos' : 'neg';
-      html += '<tr><td>' + r.label + '</td><td class="' + cls + '">' + pct + '</td></tr>';
+      html += '<tr data-label="' + r.label + '"><td>' + r.label + '</td><td class="' + cls + '">' + pct + '</td></tr>';
     }
     tb.innerHTML = html;
   }
   renderTable(initialReturns);
+
+  let selectedLabel = null;
+  function applyHighlight() {
+    const gd = document.getElementById('chart');
+    const data = gd.data || [];
+    const widths = data.map(tr => (selectedLabel && tr.name === selectedLabel) ? 3 : 1.2);
+    const opacities = data.map(tr => (selectedLabel && tr.name !== selectedLabel) ? 0.4 : 1);
+    Plotly.restyle('chart', { 'line.width': widths, 'opacity': opacities });
+    // Table row active class
+    const tb = document.getElementById('retTbody');
+    for (const tr of tb.querySelectorAll('tr')) {
+      tr.classList.toggle('active', tr.getAttribute('data-label') === selectedLabel);
+    }
+  }
+  document.getElementById('retTbody').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-label]');
+    if (!tr) return;
+    const label = tr.getAttribute('data-label');
+    selectedLabel = (selectedLabel === label) ? null : label;
+    applyHighlight();
+  });
 
   const btn = document.getElementById('refreshBtn');
   const noteEl = document.getElementById('note');

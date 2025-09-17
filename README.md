@@ -20,6 +20,7 @@ HOURS=24
 OUTDIR=out_spaghetti_html
 LABEL_BASE_ONLY=true
 TZ_NAME=America/Chicago
+VOLUME_PERIOD=24h   # 24h|7d|30d
 
 ## Deploy to GitHub Pages
 ```zsh
