@@ -1,5 +1,5 @@
 #!/bin/zsh
-export TOP_N=${TOP_N:-30}
+export TOP_N=${TOP_N:-50}
 export INTERVAL=${INTERVAL:-5m}
 export HOURS=${HOURS:-24}
 export OUTDIR=${OUTDIR:-out_spaghetti_html}
@@ -13,4 +13,4 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 npm install
 node build_html.js
-if command -v open >/dev/null 2>&1; then open "$OUTDIR" || true; fi
+if command -v open >/dev/null 2>&1; then open "$OUTDIR/spaghetti.html" || true; fi
