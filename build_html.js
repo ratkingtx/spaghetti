@@ -398,24 +398,26 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
   }
   renderTable(initialReturns);
 
-  let selectedLabel = null;
+  let selectedLabels = new Set();
   function applyHighlight() {
     const gd = document.getElementById('chart');
     const data = gd.data || [];
-    const widths = data.map(tr => (selectedLabel && tr.name === selectedLabel) ? 3 : 1.2);
-    const opacities = data.map(tr => (selectedLabel && tr.name !== selectedLabel) ? 0.4 : 1);
+    const hasSel = selectedLabels.size > 0;
+    const widths = data.map(tr => (hasSel && selectedLabels.has(tr.name)) ? 3 : 1.2);
+    const opacities = data.map(tr => (hasSel && !selectedLabels.has(tr.name)) ? 0.35 : 1);
     Plotly.restyle('chart', { 'line.width': widths, 'opacity': opacities });
-    // Table row active class
+    // Update table row state
     const tb = document.getElementById('retTbody');
-    for (const tr of tb.querySelectorAll('tr')) {
-      tr.classList.toggle('active', tr.getAttribute('data-label') === selectedLabel);
+    for (const tr of tb.querySelectorAll('tr[data-label]')) {
+      const lbl = tr.getAttribute('data-label');
+      tr.classList.toggle('active', selectedLabels.has(lbl));
     }
   }
   document.getElementById('retTbody').addEventListener('click', (e) => {
     const tr = e.target.closest('tr[data-label]');
     if (!tr) return;
     const label = tr.getAttribute('data-label');
-    selectedLabel = (selectedLabel === label) ? null : label;
+    if (selectedLabels.has(label)) selectedLabels.delete(label); else selectedLabels.add(label);
     applyHighlight();
   });
 
