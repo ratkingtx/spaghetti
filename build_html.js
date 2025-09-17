@@ -139,7 +139,9 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
 <style>
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; padding: 0; background: #ffffff; color: #111; }
   .container { display: flex; gap: 12px; padding: 12px; height: calc(100vh - 60px); box-sizing: border-box; }
-  #chart { flex: 1; min-width: 0; height: 100%; }
+  #chart { flex: 1; min-width: 0; height: 100%; position: relative; }
+  .y-handle { position: absolute; left: 0; top: 0; width: 12px; height: 100%; cursor: ns-resize; background: transparent; }
+  .y-handle:hover { background: rgba(0,0,0,0.02); }
   .header { padding: 10px 16px; background: #f6f8fa; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .header h1 { margin: 0; font-size: 16px; font-weight: 600; }
   .spacer { flex: 1; }
@@ -185,7 +187,9 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
       <tbody id="retTbody"></tbody>
     </table>
   </aside>
-  <div id="chart"></div>
+  <div id="chart">
+    <div id="yHandle" class="y-handle" title="Drag to zoom Y (double-click to reset)"></div>
+  </div>
  </div>
 <script src="./plotly.min.js"></script>
 <script>
@@ -210,6 +214,53 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
     annotations: annotations
   };
   Plotly.newPlot('chart', traces, layout, {responsive: true});
+  // Y-axis drag-to-zoom: click-drag vertically on left handle to set new y-range
+  (function initYDrag() {
+    const handle = document.getElementById('yHandle');
+    if (!handle) return;
+    let startY = null;
+    let startRange = null;
+    function screenToY(val) {
+      const gd = document.getElementById('chart');
+      const bbox = gd.getBoundingClientRect();
+      const rel = (val - bbox.top) / bbox.height; // 0..1 top->bottom
+      const y0 = layout.yaxis.range ? layout.yaxis.range[0] : gd.layout.yaxis.range[0];
+      const y1 = layout.yaxis.range ? layout.yaxis.range[1] : gd.layout.yaxis.range[1];
+      // invert since screen increases downwards
+      return y1 - rel * (y1 - y0);
+    }
+    function onDown(e){
+      e.preventDefault();
+      const gd = document.getElementById('chart');
+      const yr = (gd.layout && gd.layout.yaxis && gd.layout.yaxis.range) ? gd.layout.yaxis.range.slice() : layout.yaxis.range || [0,1];
+      startY = e.clientY;
+      startRange = yr;
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp, { once: true });
+    }
+    function onMove(e){
+      if (startY == null) return;
+      const gd = document.getElementById('chart');
+      const dy = e.clientY - startY;
+      const scale = 0.004; // sensitivity
+      const span = startRange[1] - startRange[0];
+      const delta = dy * span * scale;
+      const newRange = [startRange[0] + delta, startRange[1] - delta];
+      Plotly.relayout('chart', { 'yaxis.range': newRange });
+    }
+    function onUp(){ startY = null; startRange = null; window.removeEventListener('mousemove', onMove); }
+    function onDbl(){
+      const gd = document.getElementById('chart');
+      const ydata = (gd.data || []).flatMap(tr => tr.y || []);
+      if (!ydata.length) return;
+      const min = Math.min(...ydata);
+      const max = Math.max(...ydata);
+      const pad = (max - min) * 0.05;
+      Plotly.relayout('chart', { 'yaxis.range': [min - pad, max + pad] });
+    }
+    handle.addEventListener('mousedown', onDown);
+    handle.addEventListener('dblclick', onDbl);
+  })();
 
   async function binanceGet(path, params) {
     const qs = params ? ('?' + new URLSearchParams(params)) : '';
