@@ -14,13 +14,13 @@ dayjs.extend(timezone);
 
 const BINANCE_BASES = [process.env.BINANCE_BASE || "https://api.binance.com", "https://api.binance.us"]; // try .com then .us
 const OUTDIR = process.env.OUTDIR || "out_spaghetti_html";
-const TOP_N = parseInt(process.env.TOP_N || "50", 10);
+const TOP_N = parseInt(process.env.TOP_N || "30", 10);
 const INTERVAL = process.env.INTERVAL || "5m"; // 1m|3m|5m|15m
 const HOURS = parseInt(process.env.HOURS || "24", 10);
 const MAX_KLINES_LIMIT = 1000; // Binance cap
 const LABEL_BASE_ONLY = (process.env.LABEL_BASE_ONLY || "true").toLowerCase() === "true"; // base tickers (SOL) instead of SOLUSDT
 const TZ = process.env.TZ_NAME || "America/Chicago"; // Show Texas time
-const VOLUME_PERIOD = (process.env.VOLUME_PERIOD || "24h").toLowerCase(); // 24h|7d|30d
+const VOLUME_PERIOD = (process.env.VOLUME_PERIOD || "7d").toLowerCase(); // 24h|7d|30d
 
 const STABLES = new Set(["USDT","USDC","BUSD","DAI","TUSD","FDUSD","EURS","USDP","USDD","UST","USTC","PYUSD"]);
 const EXCL_TOKENS = ["UP","DOWN","3L","3S","5L","5S","BULL","BEAR"];
@@ -377,9 +377,10 @@ function renderHTML(traces, annotations, title, note, xTickVals, xTickText, retR
       const utcMs = d.getTime();
       const offsetMs = 5 * 60 * 60 * 1000;
       const shifted = new Date(utcMs - offsetMs);
-      const h = String(shifted.getUTCHours()).padStart(2,'0');
-      const m = String(shifted.getUTCMinutes()).padStart(2,'0');
-      return h + ':' + m;
+      let h = shifted.getUTCHours();
+      const ampm = h >= 12 ? 'pm' : 'am';
+      h = h % 12; if (h === 0) h = 12;
+      return h + ampm;
     }
     const xTickVals = (xTimesRef || []).filter(isTopOfHourUTCminus5).map(d => new Date(d).toISOString());
     const xTickText = (xTimesRef || []).filter(isTopOfHourUTCminus5).map(formatHHmmUTCminus5);

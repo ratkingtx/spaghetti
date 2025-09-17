@@ -14,13 +14,13 @@ chmod +x run_spaghetti_html.command Refresh.command
 ```
 
 ### Defaults
-TOP_N=50
+TOP_N=30
 INTERVAL=5m
 HOURS=24
 OUTDIR=out_spaghetti_html
 LABEL_BASE_ONLY=true
 TZ_NAME=America/Chicago
-VOLUME_PERIOD=24h   # 24h|7d|30d
+VOLUME_PERIOD=7d    # 24h|7d|30d
 
 ## Deploy to GitHub Pages
 ```zsh
